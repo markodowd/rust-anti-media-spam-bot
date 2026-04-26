@@ -33,6 +33,30 @@ LOG_CHANNEL_ID=your_channel_id_here
    - Send Messages (required to post logs)
 5. Use the generated URL to invite the bot to your server
 
+## Blacklisting Image Hashes
+
+The bot compares attachment hashes against `BLACKLISTED_HASHES.txt`. Each line is a SHA-256 hex digest.
+
+To add an image to the blacklist, use the included `add_hash` utility:
+
+```bash
+cargo run --bin add_hash -- path/to/image.png
+```
+
+This will:
+1. Read the file and compute its SHA-256 hash
+2. Check whether the hash is already in `BLACKLISTED_HASHES.txt`
+3. Append it if not, or print a message if it's already present
+
+You can pass any file type — the hash is computed from raw bytes regardless of format. To blacklist a spam image you've downloaded, just point the tool at it:
+
+```bash
+cargo run --bin add_hash -- ~/Downloads/spam.jpg
+# Added hash: a3f1c2...
+```
+
+Restart the bot after updating `BLACKLISTED_HASHES.txt` for changes to take effect.
+
 ## Running
 
 ```bash
