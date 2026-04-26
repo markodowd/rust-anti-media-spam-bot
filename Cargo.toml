@@ -2,6 +2,7 @@
 name = "rust-anti-spam"
 version = "0.1.0"
 edition = "2024"
+default-run = "rust-anti-spam"
 
 [dependencies]
 dotenvy = "0.15.7"
