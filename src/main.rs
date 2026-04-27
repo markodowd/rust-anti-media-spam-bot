@@ -1,5 +1,5 @@
 use dotenvy::dotenv;
-use img_hash::{HasherConfig, HashAlg, ImageHash};
+use img_hash::{HashAlg, HasherConfig, ImageHash};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::id::ChannelId;
@@ -16,9 +16,7 @@ struct Handler {
 
 fn phash_from_bytes(bytes: &[u8]) -> Option<ImageHash> {
     let img = image::load_from_memory(bytes).ok()?;
-    let hasher = HasherConfig::new()
-        .hash_alg(HashAlg::Gradient)
-        .to_hasher();
+    let hasher = HasherConfig::new().hash_alg(HashAlg::Gradient).to_hasher();
     Some(hasher.hash_image(&img))
 }
 
@@ -89,12 +87,9 @@ impl EventHandler for Handler {
 }
 
 fn prepare_blacklist_hashes() -> Vec<ImageHash> {
-    let hasher = HasherConfig::new()
-        .hash_alg(HashAlg::Gradient)
-        .to_hasher();
+    let hasher = HasherConfig::new().hash_alg(HashAlg::Gradient).to_hasher();
 
     let mut blacklisted_hashes: Vec<ImageHash> = Vec::new();
-    let mut hash_hex_lines: Vec<String> = Vec::new();
 
     match fs::read_dir("data/bad_images") {
         Ok(entries) => {
@@ -106,9 +101,7 @@ fn prepare_blacklist_hashes() -> Vec<ImageHash> {
                 match fs::read(&path) {
                     Ok(bytes) => match image::load_from_memory(&bytes) {
                         Ok(img) => {
-                            let hash = hasher.hash_image(&img);
-                            hash_hex_lines.push(hex::encode(hash.as_bytes()));
-                            blacklisted_hashes.push(hash);
+                            blacklisted_hashes.push(hasher.hash_image(&img));
                         }
                         Err(e) => eprintln!("Skipping {:?}: {:?}", path, e),
                     },
@@ -117,10 +110,6 @@ fn prepare_blacklist_hashes() -> Vec<ImageHash> {
             }
         }
         Err(e) => eprintln!("Failed to read data/bad_images: {:?}", e),
-    }
-
-    if let Err(e) = fs::write("data/BLACKLISTED_HASHES.txt", hash_hex_lines.join("\n")) {
-        eprintln!("Failed to write hash file: {:?}", e);
     }
 
     blacklisted_hashes
