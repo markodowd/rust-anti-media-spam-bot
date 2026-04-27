@@ -41,19 +41,19 @@ This approach is resilient to minor image edits — re-saves, slight crops, or c
 
 ## Blacklisting Images
 
-Place spam images in the `data/bad_images/` directory. On startup the bot reads every file in that directory, computes its pHash, and writes the hex-encoded hashes to `data/BLACKLISTED_HASHES.txt` (which is regenerated each run — edit the image files, not the text file).
-
-The `add_hash` utility prints the pHash of a single image so you can verify or inspect it:
-
-```bash
-cargo run --bin add_hash -- path/to/image.png
-# pHash: a3f1c2...
-```
+Place spam images in the `data/bad_images/` directory. On startup the bot reads every file in that directory and computes its pHash in memory — there is no separate hash file to maintain.
 
 To add a new spam image to the blacklist:
 
 1. Copy the image into `data/bad_images/`
 2. Restart the bot — it will pick it up automatically
+
+The `add_hash` utility prints the pHash of a single image, useful for inspecting or verifying a hash before adding the image:
+
+```bash
+cargo run --bin add_hash -- path/to/image.png
+# pHash: a3f1c2...
+```
 
 ## Running
 
