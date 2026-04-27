@@ -1,6 +1,6 @@
 # rust-anti-spam
 
-A Discord bot that automatically deletes spam messages containing exactly 4 attachments and logs the action to a designated channel.
+A Discord bot that automatically deletes spam messages containing exactly 4 attachments whose first image matches a blacklisted perceptual hash, and logs the action to a designated channel.
 
 ## Prerequisites
 
@@ -33,29 +33,27 @@ LOG_CHANNEL_ID=your_channel_id_here
    - Send Messages (required to post logs)
 5. Use the generated URL to invite the bot to your server
 
-## Blacklisting Image Hashes
+## How It Works
 
-The bot compares attachment hashes against `BLACKLISTED_HASHES.txt`. Each line is a SHA-256 hex digest.
+When a message with exactly 4 attachments is posted, the bot downloads the first attachment and computes its **perceptual hash** (pHash) using the Gradient algorithm. It then compares that hash against every entry in the blacklist using **Hamming distance**. If the closest match is within the threshold (≤ 5 bits), the message is deleted and the event is logged.
 
-To add an image to the blacklist, use the included `add_hash` utility:
+This approach is resilient to minor image edits — re-saves, slight crops, or compression artefacts that would defeat a simple byte-for-byte hash check.
+
+## Blacklisting Images
+
+Place spam images in the `data/bad_images/` directory. On startup the bot reads every file in that directory, computes its pHash, and writes the hex-encoded hashes to `data/BLACKLISTED_HASHES.txt` (which is regenerated each run — edit the image files, not the text file).
+
+The `add_hash` utility prints the pHash of a single image so you can verify or inspect it:
 
 ```bash
 cargo run --bin add_hash -- path/to/image.png
+# pHash: a3f1c2...
 ```
 
-This will:
-1. Read the file and compute its SHA-256 hash
-2. Check whether the hash is already in `BLACKLISTED_HASHES.txt`
-3. Append it if not, or print a message if it's already present
+To add a new spam image to the blacklist:
 
-You can pass any file type — the hash is computed from raw bytes regardless of format. To blacklist a spam image you've downloaded, just point the tool at it:
-
-```bash
-cargo run --bin add_hash -- ~/Downloads/spam.jpg
-# Added hash: a3f1c2...
-```
-
-Restart the bot after updating `BLACKLISTED_HASHES.txt` for changes to take effect.
+1. Copy the image into `data/bad_images/`
+2. Restart the bot — it will pick it up automatically
 
 ## Running
 

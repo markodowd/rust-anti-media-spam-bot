@@ -1,5 +1,4 @@
-use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use img_hash::{HasherConfig, HashAlg};
 use std::env;
 use std::fs;
 
@@ -14,31 +13,15 @@ fn main() {
         std::process::exit(1);
     });
 
-    let hash = hex::encode(Sha256::digest(&bytes));
-
-    let hash_file = "BLACKLISTED_HASHES.txt";
-    let existing = fs::read_to_string(hash_file).unwrap_or_default();
-    let known: HashSet<&str> = existing.lines().map(str::trim).collect();
-
-    if known.contains(hash.as_str()) {
-        println!("Hash already blacklisted: {}", hash);
-        return;
-    }
-
-    let entry = if existing.ends_with('\n') || existing.is_empty() {
-        format!("{}\n", hash)
-    } else {
-        format!("\n{}\n", hash)
-    };
-
-    fs::write(
-        hash_file,
-        format!("{}{}", existing, entry),
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("Failed to write '{}': {}", hash_file, e);
+    let img = image::load_from_memory(&bytes).unwrap_or_else(|e| {
+        eprintln!("Failed to decode image '{}': {}", path, e);
         std::process::exit(1);
     });
 
-    println!("Added hash: {}", hash);
+    let hasher = HasherConfig::new()
+        .hash_alg(HashAlg::Gradient)
+        .to_hasher();
+
+    let hash = hasher.hash_image(&img);
+    println!("pHash: {}", hex::encode(hash.as_bytes()));
 }

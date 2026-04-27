@@ -1,75 +1,118 @@
 use dotenvy::dotenv;
+use img_hash::{HashAlg, HasherConfig, ImageHash};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::id::ChannelId;
 use serenity::prelude::*;
-use sha2::{Digest, Sha256};
-use std::collections::HashSet;
 use std::env;
+use std::fs;
+
+const HAMMING_THRESHOLD: u32 = 5;
 
 struct Handler {
     log_channel_id: ChannelId,
-    blacklisted_hashes: HashSet<String>,
+    blacklisted_hashes: Vec<ImageHash>,
+}
+
+fn phash_from_bytes(bytes: &[u8]) -> Option<ImageHash> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let hasher = HasherConfig::new().hash_alg(HashAlg::Gradient).to_hasher();
+    Some(hasher.hash_image(&img))
 }
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        if msg.author.bot {
+        if msg.author.bot || msg.attachments.len() != 4 {
             return;
         }
 
-        if msg.attachments.len() == 4 {
-            let attachment = &msg.attachments[0];
-
-            let bytes = match reqwest::get(&attachment.url).await {
-                Ok(resp) => match resp.bytes().await {
-                    Ok(b) => b,
-                    Err(e) => {
-                        eprintln!("Failed to read attachment bytes: {:?}", e);
-                        return;
-                    }
-                },
+        let bytes = match reqwest::get(&msg.attachments[0].url).await {
+            Ok(resp) => match resp.bytes().await {
+                Ok(b) => b,
                 Err(e) => {
-                    eprintln!("Failed to download attachment: {:?}", e);
+                    eprintln!("Failed to read attachment bytes: {:?}", e);
                     return;
                 }
-            };
-
-            let hash = hex::encode(Sha256::digest(&bytes));
-
-            if !self.blacklisted_hashes.contains(&hash) {
+            },
+            Err(e) => {
+                eprintln!("Failed to download attachment: {:?}", e);
                 return;
             }
+        };
 
-            match msg.delete(&ctx.http).await {
-                Ok(_) => {
-                    let log_entry = format!(
-                        "🗑️ **Spam Filter Triggered**\n\
-                         **User:** {} (`{}`)\n\
-                         **Action:** Deleted message with 4 attachments (blacklisted hash: `{}`)\n\
-                         **Channel:** <#{}>",
-                        msg.author.tag(),
-                        msg.author.id,
-                        hash,
-                        msg.channel_id
-                    );
+        let hash = match phash_from_bytes(&bytes) {
+            Some(h) => h,
+            None => {
+                eprintln!("Failed to compute pHash for attachment");
+                return;
+            }
+        };
 
-                    if let Err(e) = self.log_channel_id.say(&ctx.http, log_entry).await {
-                        eprintln!("Failed to send log to channel: {:?}", e);
-                    }
+        let min_dist = match self.blacklisted_hashes.iter().map(|bh| hash.dist(bh)).min() {
+            Some(d) => d,
+            None => return,
+        };
+
+        if min_dist > HAMMING_THRESHOLD {
+            return;
+        }
+
+        match msg.delete(&ctx.http).await {
+            Ok(_) => {
+                let log_entry = format!(
+                    "🗑️ **Spam Filter Triggered**\n\
+                     **User:** {} (`{}`)\n\
+                     **Action:** Deleted message with 4 attachments (pHash distance: `{}`)\n\
+                     **Channel:** <#{}>",
+                    msg.author.tag(),
+                    msg.author.id,
+                    min_dist,
+                    msg.channel_id
+                );
+                if let Err(e) = self.log_channel_id.say(&ctx.http, log_entry).await {
+                    eprintln!("Failed to send log to channel: {:?}", e);
                 }
-                Err(why) => {
-                    let error_log = format!(
-                        "⚠️ **Deletion Failed**\n**User:** {}\n**Error:** {:?}",
-                        msg.author.tag(),
-                        why
-                    );
-                    let _ = self.log_channel_id.say(&ctx.http, error_log).await;
-                }
+            }
+            Err(why) => {
+                let error_log = format!(
+                    "⚠️ **Deletion Failed**\n**User:** {}\n**Error:** {:?}",
+                    msg.author.tag(),
+                    why
+                );
+                let _ = self.log_channel_id.say(&ctx.http, error_log).await;
             }
         }
     }
+}
+
+fn prepare_blacklist_hashes() -> Vec<ImageHash> {
+    let hasher = HasherConfig::new().hash_alg(HashAlg::Gradient).to_hasher();
+
+    let mut blacklisted_hashes: Vec<ImageHash> = Vec::new();
+
+    match fs::read_dir("data/bad_images") {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                match fs::read(&path) {
+                    Ok(bytes) => match image::load_from_memory(&bytes) {
+                        Ok(img) => {
+                            blacklisted_hashes.push(hasher.hash_image(&img));
+                        }
+                        Err(e) => eprintln!("Skipping {:?}: {:?}", path, e),
+                    },
+                    Err(e) => eprintln!("Failed to read {:?}: {:?}", path, e),
+                }
+            }
+        }
+        Err(e) => eprintln!("Failed to read data/bad_images: {:?}", e),
+    }
+
+    blacklisted_hashes
 }
 
 #[tokio::main]
@@ -79,24 +122,14 @@ async fn main() {
     let token = env::var("DISCORD_TOKEN")
         .expect("Expected a token in the environment variable 'DISCORD_TOKEN'");
 
-    let log_channel_str =
-        env::var("LOG_CHANNEL_ID").expect("Expected LOG_CHANNEL_ID in environment");
-
-    let log_channel_u64 = log_channel_str
+    let log_channel_u64 = env::var("LOG_CHANNEL_ID")
+        .expect("Expected LOG_CHANNEL_ID in environment")
         .parse::<u64>()
         .expect("LOG_CHANNEL_ID must be a valid integer");
 
-    let hash_file = std::fs::read_to_string("BLACKLISTED_HASHES.txt")
-        .expect("Failed to read BLACKLISTED_HASHES.txt");
-
-    let blacklisted_hashes: HashSet<String> = hash_file
-        .lines()
-        .map(|l| l.trim().to_lowercase())
-        .filter(|l| !l.is_empty())
-        .collect();
+    let blacklisted_hashes = prepare_blacklist_hashes();
 
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
-
     let hash_count = blacklisted_hashes.len();
 
     let handler = Handler {
@@ -110,7 +143,7 @@ async fn main() {
         .expect("Error creating client");
 
     println!(
-        "Bot is starting... Monitoring for 4-attachment spam ({} blacklisted hashes loaded).",
+        "Bot is starting... Monitoring for 4-attachment spam ({} blacklisted pHashes loaded).",
         hash_count
     );
 
